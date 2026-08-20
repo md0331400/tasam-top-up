@@ -6,17 +6,20 @@ import { getAdmin } from "@/lib/admin";
 //
 // Secure admin authentication via an authorized Device Key.
 //
-// The admin app sends its Device Key. We (server-side, Admin SDK) check:
-//   1. The key exists in adminDevices/{deviceKey}.
-//   2. isActive == true (not disabled/revoked).
-//   3. Resolve the admin uid (see resolveAdminUid below).
-//   4. Confirm that uid still has role == "admin".
+// SIMPLE MODEL (as requested):
+//   • An admin authorizes a device by creating a doc in adminDevices with the
+//     device key as the doc id (only `deviceName` is needed — no uid/email).
+//   • To revoke a device, the admin deletes that doc from Firestore.
+//   • A device is "disabled" if it has isActive == false (optional).
 //
-// If all pass, we mint a custom token for that admin uid and return it.
-// The client then signs in with signInWithCustomToken().
+// The admin identity is resolved automatically (the admin's `users` doc has
+// role == "admin"), so the owner never has to type an email or uid anywhere.
 //
-// This is NOT "frontend → Firestore → check role". Device authorization is
-// verified server-side, and no master key/secret lives in the frontend.
+// Flow:
+//   1. deviceKey exists in adminDevices/{deviceKey}?  → else "not_authorized"
+//   2. isActive != false                              → else "device_disabled"
+//   3. resolve an admin uid (device doc → settings/admin → first role==admin)
+//   4. mint a custom token for that uid
 // ---------------------------------------------------------------------------
 
 export async function POST(request) {
@@ -40,7 +43,7 @@ export async function POST(request) {
   try {
     const db = admin.firestore();
 
-    // 1. Look up the device record.
+    // 1. Device must be authorized (doc exists with this key as its id).
     const snap = await db.collection("adminDevices").doc(deviceKey).get();
     if (!snap.exists) {
       return NextResponse.json({ error: "not_authorized" });
@@ -48,19 +51,14 @@ export async function POST(request) {
 
     const data = snap.data();
 
-    if (data.isActive !== true) {
+    // 2. Optional explicit disable (only blocks when the field is exactly false).
+    if (data.isActive === false) {
       return NextResponse.json({ error: "device_disabled" });
     }
 
-    // 2. Resolve the admin uid (device doc → global settings/admin).
+    // 3. Resolve an admin uid.
     const uid = await resolveAdminUid(admin, db, data);
     if (!uid) {
-      return NextResponse.json({ error: "not_authorized" });
-    }
-
-    // 3. Confirm the bound account is still an admin.
-    const userSnap = await db.collection("users").doc(uid).get();
-    if (!userSnap.exists || userSnap.data().role !== "admin") {
       return NextResponse.json({ error: "not_authorized" });
     }
 
@@ -81,36 +79,42 @@ export async function POST(request) {
 }
 
 /**
- * Resolve which admin a device maps to, in order of precedence:
- *   1. device doc `uid`           (explicit, per-device)
- *   2. device doc `adminEmail`    (explicit, per-device)
- *   3. settings/admin `uid`       (global fallback)
- *   4. settings/admin `adminEmail` (global fallback)
- *
- * The global `settings/admin` fallback means a device record can be authorized
- * with JUST `isActive: true` — no uid/email on the device itself. The admin
- * identity lives in ONE place (settings/admin), set once.
+ * Resolve the admin uid, in order of precedence:
+ *   1. device doc `uid`
+ *   2. device doc `adminEmail`
+ *   3. settings/admin `uid` or `adminEmail`
+ *   4. first user with role == "admin" (automatic — nothing to configure)
  */
 async function resolveAdminUid(admin, db, deviceData) {
-  // Per-device explicit identity.
   if (deviceData.uid) return deviceData.uid;
   if (deviceData.adminEmail) {
     try {
       const u = await admin.auth().getUserByEmail(deviceData.adminEmail);
       return u.uid;
-    } catch (_) { /* fall through to global */ }
+    } catch (_) { /* fall through */ }
   }
 
-  // Global fallback.
   try {
     const s = await db.collection("settings").doc("admin").get();
-    if (!s.exists) return "";
-    const sd = s.data();
-    if (sd.uid) return sd.uid;
-    if (sd.adminEmail) {
-      const u = await admin.auth().getUserByEmail(sd.adminEmail);
-      return u.uid;
+    if (s.exists) {
+      const sd = s.data();
+      if (sd.uid) return sd.uid;
+      if (sd.adminEmail) {
+        try {
+          const u = await admin.auth().getUserByEmail(sd.adminEmail);
+          return u.uid;
+        } catch (_) { /* fall through */ }
+      }
     }
+  } catch (_) { /* ignore */ }
+
+  // Automatic fallback: the admin is the user whose role is "admin".
+  try {
+    const snap = await db.collection("users")
+      .where("role", "==", "admin")
+      .limit(1)
+      .get();
+    if (!snap.empty) return snap.docs[0].id;
   } catch (_) { /* ignore */ }
 
   return "";
