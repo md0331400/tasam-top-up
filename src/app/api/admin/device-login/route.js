@@ -46,11 +46,25 @@ export async function POST(request) {
     }
 
     const data = snap.data();
+
     if (data.isActive !== true) {
       return NextResponse.json({ error: "device_disabled" });
     }
 
-    const uid = data.uid || "";
+    // Resolve the admin identity. Supports BOTH:
+    //   • adminEmail  (recommended — easier to type/copy than uid)
+    //   • uid         (legacy — still works)
+    let uid = data.uid || "";
+
+    if (!uid && data.adminEmail) {
+      try {
+        const user = await admin.auth().getUserByEmail(data.adminEmail);
+        uid = user.uid;
+      } catch (_) {
+        return NextResponse.json({ error: "not_authorized" });
+      }
+    }
+
     if (!uid) {
       return NextResponse.json({ error: "not_authorized" });
     }
