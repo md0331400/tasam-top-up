@@ -1,0 +1,27 @@
+{
+  "name": "TASAM TOP UP BD",
+  "short_name": "Tasam TopUp",
+  "description": "TASAM TOP UP BD — Bangladesh's fast, safe and reliable game top-up platform. Buy Free Fire diamonds, PUBG UC, eFootball coins and more with bKash, Nagad, Rocket or wallet.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1a060d",
+  "theme_color": "#e11d48",
+  "lang": "bn",
+  "categories": ["games", "shopping", "utilities"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
